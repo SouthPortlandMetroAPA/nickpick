@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<!--
+  NickPick — South Portland Metro APA · player nickname change requests (v0.1)
+  ─────────────────────────────────────────────────────────────────────────
+  ONE page, two views (toggled by ?token=):
+    A) no token  → request a magic-link (enter email, POST nickname_link_request)
+    B) ?token=   → verify the link (nickname_verify), show current nickname,
+                   submit a new one (nickname_submit)
+  All POSTs go to the GAS apa-mailer as text/plain — NEVER application/json
+  (JSON triggers a CORS preflight GAS can't answer). 100% client-side, NO secrets.
+  This app NEVER writes the nickname anywhere — it captures a REQUEST. The actual
+  change is entered in Nexus by an operator; Slate reflects it on re-import.
+  Anti-abuse: honeypot + server-side rate limit + single-use/expiring token.
+  Cloned from Apps/ChalkTalk/site/index.html for house consistency.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Change Your Nickname — South Portland Metro APA</title>
+<style>
+  :root{
+    --bg:#eef1f6; --card:#ffffff; --ink:#161b22; --muted:#5b6470; --line:#e2e6ec;
+    --accent:#1f57d6; --accent-dark:#173fa0; --accent-soft:#e8eefb;
+    --red:#d21f2b; --red-dark:#a5121d;
+    --good:#12703f; --good-soft:#e7f6ec; --bad:#b3261e; --bad-soft:#fdecec;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --bg:#0f1216; --card:#181c22; --ink:#e9edf2; --muted:#9aa3af; --line:#2a2f37;
+      --accent:#6f93f0; --accent-dark:#5a7fe0; --accent-soft:#1a2233;
+      --red:#f0857e; --red-dark:#d8635b;
+      --good:#5fce93; --good-soft:#152318; --bad:#f0857e; --bad-soft:#2a1614; }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink); min-height:100vh;
+    font-family:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.5; display:flex; align-items:flex-start; justify-content:center;
+    padding:28px 16px 60px;
+  }
+  .card{
+    position:relative; width:100%; max-width:520px; background:var(--card);
+    border:1px solid var(--line); border-radius:16px;
+    box-shadow:0 6px 24px rgba(20,30,50,.08); padding:26px 24px 24px; overflow:hidden;
+  }
+  /* APA red + blue brand stripe across the top of the card */
+  .card::before{content:""; position:absolute; top:0; left:0; right:0; height:5px;
+    background:linear-gradient(90deg, var(--red) 0 50%, var(--accent) 50% 100%);}
+  .brand{font-size:22px; font-weight:800; letter-spacing:-.3px; margin-top:4px}
+  .brand .n{color:var(--red)} .brand .p{color:var(--accent)}
+  .eyebrow{text-transform:uppercase; letter-spacing:1.6px; font-size:11.5px; font-weight:700; color:var(--muted); margin-top:2px}
+  h1{font-size:24px; margin:12px 0 4px; letter-spacing:-.2px}
+  .sub{color:var(--muted); margin:0 0 18px; font-size:15px}
+
+  label{display:block; font-weight:600; font-size:14px; margin:14px 0 5px}
+  input[type=email], input[type=text]{
+    width:100%; font:inherit; font-size:15px; color:var(--ink); background:var(--card);
+    border:1px solid #cbd2dc; border-radius:10px; padding:11px 12px; transition:border-color .15s, box-shadow .15s;
+  }
+  @media (prefers-color-scheme:dark){ input[type=email], input[type=text]{ border-color:#3a414b } }
+  input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+  .err{color:var(--bad); font-size:13px; margin-top:5px; min-height:16px}
+  .counter{font-size:12px; color:var(--muted); text-align:right; margin-top:4px}
+  .counter.over{color:var(--red); font-weight:600}
+  .current{background:var(--accent-soft); border-radius:10px; padding:10px 12px; font-size:14px; margin:2px 0 4px}
+  .current b{color:var(--accent-dark)}
+
+  .hp{position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden}
+
+  button{
+    margin-top:20px; width:100%; font:inherit; font-size:16px; font-weight:700;
+    color:#fff; background:var(--accent); border:none; border-radius:10px;
+    padding:13px 16px; cursor:pointer; transition:background .15s;
+  }
+  button:hover:not(:disabled){background:var(--accent-dark)}
+  button:disabled{opacity:.6; cursor:default}
+
+  .note{margin-top:14px; font-size:12.5px; color:var(--muted); text-align:center}
+  .loading{margin-top:16px; font-size:14.5px; color:var(--muted); text-align:center}
+  .result{margin-top:16px; border-radius:10px; padding:14px 15px; font-size:14.5px; display:none}
+  .result.show{display:block}
+  .result.ok{background:var(--good-soft); color:var(--good)}
+  .result.bad{background:var(--bad-soft); color:var(--bad)}
+  .result h2{margin:0 0 4px; font-size:16px}
+  .result p{margin:0}
+  a.again{color:var(--accent); font-weight:600; cursor:pointer; text-decoration:none}
+  a.again:hover{text-decoration:underline}
+  .foot{margin-top:22px; text-align:center; color:var(--muted); font-size:12px}
+  [hidden]{display:none !important}
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="brand"><span class="n">Nick</span><span class="p">Pick</span></div>
+    <div class="eyebrow">South Portland Metro APA</div>
+
+    <!-- VIEW A: request a magic-link -->
+    <section id="viewRequest" hidden>
+      <h1>Pick a new nickname</h1>
+      <p class="sub">Want a fresh name on the standings and scoresheets? Enter your league email and we'll send you a one-tap link. No password, no fuss.</p>
+      <form id="reqForm" novalidate>
+        <label for="email">Your league email</label>
+        <input type="email" id="email" name="email" autocomplete="email" placeholder="you@example.com" required>
+        <div class="err" id="emailErr"></div>
+        <div class="hp" aria-hidden="true">
+          <label for="hp1">Leave this field empty</label>
+          <input type="text" id="hp1" name="hp1" tabindex="-1" autocomplete="off">
+        </div>
+        <button type="submit" id="reqBtn">Send me the link</button>
+        <div class="note">We'll only email a link if you're on our roster.</div>
+      </form>
+    </section>
+
+    <!-- VIEW B: verify + submit (shown after a good token) -->
+    <section id="viewSubmit" hidden>
+      <h1 id="greet">Nice to see you</h1>
+      <div class="current" id="curLine"></div>
+      <form id="subForm" novalidate>
+        <label for="nickname">Your new nickname</label>
+        <input type="text" id="nickname" name="nickname" maxlength="40" autocomplete="off" placeholder="e.g. The Cueball Kid" required>
+        <div class="counter" id="counter"><span id="count">0</span> / 20</div>
+        <div class="err" id="nickErr"></div>
+        <div class="hp" aria-hidden="true">
+          <label for="hp2">Leave this field empty</label>
+          <input type="text" id="hp2" name="hp2" tabindex="-1" autocomplete="off">
+        </div>
+        <button type="submit" id="subBtn">Make it official</button>
+        <div class="note">A human reviews every nickname before it goes live.</div>
+      </form>
+    </section>
+
+    <div class="loading" id="loading" hidden>Checking your link…</div>
+    <div class="result" id="result" role="status" aria-live="polite"></div>
+
+    <div class="foot">NickPick v0.1 · South Portland Metro APA</div>
+  </main>
+
+<script>
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbzGTzkBRTrIIP_tD6sbtOOUmNZkXDdtxPoO4c8fdWt5h3tZFueNSISPv8Q3LWStx73Whw/exec';
+  const $ = id => document.getElementById(id);
+  const isEmail = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  const token = new URLSearchParams(location.search).get('token');
+  const result = $('result');
+
+  function showResult(kind, title, msg){
+    result.className = 'result show ' + kind;
+    result.innerHTML = '<h2>' + title + '</h2><p>' + msg + '</p>';
+  }
+  function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  const freshLink = '<br><br><a class="again" onclick="location.href=location.pathname">Request a fresh link</a>';
+
+  // text/plain (default for a string body) — no CORS preflight; GAS parses the raw JSON body.
+  async function post(payload){
+    const r = await fetch(GAS_URL, { method:'POST', body: JSON.stringify(payload) });
+    return r.json();
+  }
+
+  /* ── VIEW A: request a link ─────────────────────────────────────────── */
+  function initRequest(){
+    $('viewRequest').hidden = false;
+    $('reqForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      $('emailErr').textContent = '';
+      const email = $('email').value.trim();
+      if (!isEmail(email)) { $('emailErr').textContent = 'Please enter a valid email address.'; return; }
+      const btn = $('reqBtn'); btn.disabled = true; btn.textContent = 'Sending…'; result.className = 'result';
+      try {
+        const data = await post({ action:'nickname_link_request', email, hp: $('hp1').value, source:'nickpick-web' });
+        if (data && data.ok) {
+          $('viewRequest').hidden = true;
+          showResult('ok', 'Check your inbox',
+            'If ' + escapeHtml(email) + ' is on our roster, a nickname link is on its way. It works once and expires in 30 minutes. (Peek in spam if it is playing hard to get.)');
+        } else {
+          btn.disabled = false; btn.textContent = 'Send me the link';
+          showResult('bad', 'Hmm, that did not go through', (data && data.error) || 'Please try again in a moment.');
+        }
+      } catch (err) {
+        btn.disabled = false; btn.textContent = 'Send me the link';
+        showResult('bad', 'Connection problem', 'We could not reach the server. Check your connection and try again.');
+      }
+    });
+  }
+
+  /* ── VIEW B: verify token, then submit a nickname ───────────────────── */
+  async function initSubmit(){
+    $('loading').hidden = false;
+    let data;
+    try { data = await post({ action:'nickname_verify', token }); }
+    catch (err) { $('loading').hidden = true; showResult('bad', 'Connection problem', 'We could not reach the server. Try the link again in a moment.'); return; }
+    $('loading').hidden = true;
+    if (!data || !data.ok) { showResult('bad', 'That link will not work', ((data && data.error) || 'This link is not valid.') + freshLink); return; }
+
+    const name = (data.first_name || '').trim();
+    const cur  = (data.current_nickname || '').trim();
+    $('greet').textContent = name ? ('Hey ' + name + '!') : 'Hey there!';
+    $('curLine').innerHTML = cur
+      ? 'You are currently known as <b>' + escapeHtml(cur) + '</b>. What would you like instead?'
+      : 'You do not have a nickname yet. Let us fix that.';
+    $('viewSubmit').hidden = false;
+
+    const nick = $('nickname'), count = $('count'), counter = $('counter');
+    nick.addEventListener('input', () => {
+      const n = nick.value.trim().length;
+      count.textContent = n;
+      counter.classList.toggle('over', n > 20);
+    });
+
+    $('subForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      $('nickErr').textContent = '';
+      const nickname = nick.value.trim();
+      if (!nickname) { $('nickErr').textContent = 'Give us a nickname first.'; return; }
+      if (nickname.length > 40) { $('nickErr').textContent = 'A touch long — keep it under 40 characters.'; return; }
+      const btn = $('subBtn'); btn.disabled = true; btn.textContent = 'Sending…'; result.className = 'result';
+      try {
+        const res = await post({ action:'nickname_submit', token, nickname, hp: $('hp2').value, source:'nickpick-web' });
+        if (res && res.ok) {
+          $('viewSubmit').hidden = true;
+          showResult('ok', 'Request received!',
+            'You asked to be known as <b>' + escapeHtml(nickname) + '</b>. A human will make it official and we will email you the moment it is done. Hold the victory lap until then.');
+        } else {
+          btn.disabled = false; btn.textContent = 'Make it official';
+          showResult('bad', 'That did not go through', ((res && res.error) || 'Please try again.') + (/(expired|already|not valid|fresh)/i.test((res && res.error) || '') ? freshLink : ''));
+        }
+      } catch (err) {
+        btn.disabled = false; btn.textContent = 'Make it official';
+        showResult('bad', 'Connection problem', 'We could not reach the server. Check your connection and try again.');
+      }
+    });
+  }
+
+  if (token) initSubmit(); else initRequest();
+</script>
+</body>
+</html>
