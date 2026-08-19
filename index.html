@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  NickPick — South Portland Metro APA · player nickname change requests (v0.1)
+  NickPick — South Portland Metro APA · player nickname change requests (v0.2)
   ─────────────────────────────────────────────────────────────────────────
   ONE page, two views (toggled by ?token=):
     A) no token  → request a magic-link (enter email, POST nickname_link_request)
@@ -11,130 +11,97 @@
   This app NEVER writes the nickname anywhere — it captures a REQUEST. The actual
   change is entered in Nexus by an operator; Slate reflects it on re-import.
   Anti-abuse: honeypot + server-side rate limit + single-use/expiring token.
-  Cloned from Apps/ChalkTalk/site/index.html for house consistency.
+  v0.2: re-skinned onto the canonical SPM brand (shared spm-base.css: red→blue
+  gradient header, brand colors, pill buttons) for cross-app consistency.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Change Your Nickname — South Portland Metro APA</title>
+<link rel="stylesheet" href="https://southportlandmetroapa.github.io/shared/spm-base.css">
 <style>
-  :root{
-    --bg:#eef1f6; --card:#ffffff; --ink:#161b22; --muted:#5b6470; --line:#e2e6ec;
-    --accent:#1f57d6; --accent-dark:#173fa0; --accent-soft:#e8eefb;
-    --red:#d21f2b; --red-dark:#a5121d;
-    --good:#12703f; --good-soft:#e7f6ec; --bad:#b3261e; --bad-soft:#fdecec;
-  }
-  @media (prefers-color-scheme:dark){
-    :root{ --bg:#0f1216; --card:#181c22; --ink:#e9edf2; --muted:#9aa3af; --line:#2a2f37;
-      --accent:#6f93f0; --accent-dark:#5a7fe0; --accent-soft:#1a2233;
-      --red:#f0857e; --red-dark:#d8635b;
-      --good:#5fce93; --good-soft:#152318; --bad:#f0857e; --bad-soft:#2a1614; }
-  }
-  *{box-sizing:border-box}
-  html,body{margin:0;padding:0}
-  body{
-    background:var(--bg); color:var(--ink); min-height:100vh;
-    font-family:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
-    line-height:1.5; display:flex; align-items:flex-start; justify-content:center;
-    padding:28px 16px 60px;
-  }
-  .card{
-    position:relative; width:100%; max-width:520px; background:var(--card);
-    border:1px solid var(--line); border-radius:16px;
-    box-shadow:0 6px 24px rgba(20,30,50,.08); padding:26px 24px 24px; overflow:hidden;
-  }
-  /* APA red + blue brand stripe across the top of the card */
-  .card::before{content:""; position:absolute; top:0; left:0; right:0; height:5px;
-    background:linear-gradient(90deg, var(--red) 0 50%, var(--accent) 50% 100%);}
-  .brand{font-size:22px; font-weight:800; letter-spacing:-.3px; margin-top:4px}
-  .brand .n{color:var(--red)} .brand .p{color:var(--accent)}
-  .eyebrow{text-transform:uppercase; letter-spacing:1.6px; font-size:11.5px; font-weight:700; color:var(--muted); margin-top:2px}
-  h1{font-size:24px; margin:12px 0 4px; letter-spacing:-.2px}
-  .sub{color:var(--muted); margin:0 0 18px; font-size:15px}
-
-  label{display:block; font-weight:600; font-size:14px; margin:14px 0 5px}
+  /* App-specific bits layered over the shared SPM brand. Colors come from
+     spm-base.css tokens (--spm-primary #ea002a, --spm-accent #0031a1). */
+  .spm-page{ max-width:560px; }
+  .lead{ color:var(--muted); margin:2px 0 16px; font-size:1rem; }
+  .view-title{ font-size:1.2rem; font-weight:800; margin:0 0 6px; color:var(--text); }
+  label{ display:block; font-weight:600; font-size:.9rem; margin:14px 0 5px; }
   input[type=email], input[type=text]{
-    width:100%; font:inherit; font-size:15px; color:var(--ink); background:var(--card);
-    border:1px solid #cbd2dc; border-radius:10px; padding:11px 12px; transition:border-color .15s, box-shadow .15s;
+    width:100%; font:inherit; font-size:1rem; color:var(--text); background:#fff;
+    border:1px solid var(--border); border-radius:12px; padding:12px 13px;
+    transition:border-color .15s, box-shadow .15s;
   }
-  @media (prefers-color-scheme:dark){ input[type=email], input[type=text]{ border-color:#3a414b } }
-  input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
-  .err{color:var(--bad); font-size:13px; margin-top:5px; min-height:16px}
-  .counter{font-size:12px; color:var(--muted); text-align:right; margin-top:4px}
-  .counter.over{color:var(--red); font-weight:600}
-  .current{background:var(--accent-soft); border-radius:10px; padding:10px 12px; font-size:14px; margin:2px 0 4px}
-  .current b{color:var(--accent-dark)}
-
-  .hp{position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden}
-
-  button{
-    margin-top:20px; width:100%; font:inherit; font-size:16px; font-weight:700;
-    color:#fff; background:var(--accent); border:none; border-radius:10px;
-    padding:13px 16px; cursor:pointer; transition:background .15s;
-  }
-  button:hover:not(:disabled){background:var(--accent-dark)}
-  button:disabled{opacity:.6; cursor:default}
-
-  .note{margin-top:14px; font-size:12.5px; color:var(--muted); text-align:center}
-  .loading{margin-top:16px; font-size:14.5px; color:var(--muted); text-align:center}
-  .result{margin-top:16px; border-radius:10px; padding:14px 15px; font-size:14.5px; display:none}
-  .result.show{display:block}
-  .result.ok{background:var(--good-soft); color:var(--good)}
-  .result.bad{background:var(--bad-soft); color:var(--bad)}
-  .result h2{margin:0 0 4px; font-size:16px}
-  .result p{margin:0}
-  a.again{color:var(--accent); font-weight:600; cursor:pointer; text-decoration:none}
-  a.again:hover{text-decoration:underline}
-  .foot{margin-top:22px; text-align:center; color:var(--muted); font-size:12px}
-  [hidden]{display:none !important}
+  input:focus{ outline:none; border-color:var(--spm-accent); box-shadow:0 0 0 3px rgba(0,49,161,.15); }
+  .err{ color:var(--spm-primary); font-size:.82rem; margin-top:5px; min-height:16px; }
+  .counter{ font-size:.78rem; color:var(--muted); text-align:right; margin-top:4px; }
+  .counter.over{ color:var(--spm-primary); font-weight:700; }
+  .current{ background:#e8f0fe; color:#1a3b6b; border-radius:12px; padding:11px 13px; font-size:.95rem; margin:2px 0 4px; }
+  .current b{ color:#12305e; }
+  .hp{ position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden; }
+  .spm-btn.btn-full{ width:100%; margin-top:20px; }
+  .spm-btn:disabled{ opacity:.6; cursor:default; filter:none; transform:none; }
+  .note{ margin-top:14px; font-size:.8rem; color:var(--muted); text-align:center; }
+  .loading{ margin-top:8px; font-size:.95rem; color:var(--muted); text-align:center; }
+  .result{ margin-top:16px; border-radius:12px; padding:14px 15px; font-size:.95rem; display:none; }
+  .result.show{ display:block; }
+  .result.ok{ background:#e8f0fe; color:#1a3b6b; }
+  .result.bad{ background:#fce8ea; color:#a02030; }
+  .result h2{ margin:0 0 4px; font-size:1.05rem; }
+  .result p{ margin:0; }
+  a.again{ color:var(--spm-accent); font-weight:700; cursor:pointer; text-decoration:none; }
+  a.again:hover{ text-decoration:underline; }
+  [hidden]{ display:none !important; }
 </style>
 </head>
 <body>
-  <main class="card">
-    <div class="brand"><span class="n">Nick</span><span class="p">Pick</span></div>
-    <div class="eyebrow">South Portland Metro APA</div>
+  <div class="spm-page">
+    <header class="spm-header">
+      <h1>NickPick</h1>
+      <p class="spm-subtitle">Change your pool nickname</p>
+    </header>
 
-    <!-- VIEW A: request a magic-link -->
-    <section id="viewRequest" hidden>
-      <h1>Pick a new nickname</h1>
-      <p class="sub">Want a fresh name on the standings and scoresheets? Enter your league email and we'll send you a one-tap link. No password, no fuss.</p>
-      <form id="reqForm" novalidate>
-        <label for="email">Your league email</label>
-        <input type="email" id="email" name="email" autocomplete="email" placeholder="you@example.com" required>
-        <div class="err" id="emailErr"></div>
-        <div class="hp" aria-hidden="true">
-          <label for="hp1">Leave this field empty</label>
-          <input type="text" id="hp1" name="hp1" tabindex="-1" autocomplete="off">
-        </div>
-        <button type="submit" id="reqBtn">Send me the link</button>
-        <div class="note">We'll only email a link if you're on our roster.</div>
-      </form>
-    </section>
+    <main class="spm-card">
+      <!-- VIEW A: request a magic-link -->
+      <section id="viewRequest" hidden>
+        <p class="lead">Want a fresh name on the standings and scoresheets? Enter your league email and we'll send you a one-tap link. No password, no fuss.</p>
+        <form id="reqForm" novalidate>
+          <label for="email">Your league email</label>
+          <input type="email" id="email" name="email" autocomplete="email" placeholder="you@example.com" required>
+          <div class="err" id="emailErr"></div>
+          <div class="hp" aria-hidden="true">
+            <label for="hp1">Leave this field empty</label>
+            <input type="text" id="hp1" name="hp1" tabindex="-1" autocomplete="off">
+          </div>
+          <button type="submit" id="reqBtn" class="spm-btn spm-btn-primary btn-full">Send me the link</button>
+          <div class="note">We'll only email a link if you're on our roster.</div>
+        </form>
+      </section>
 
-    <!-- VIEW B: verify + submit (shown after a good token) -->
-    <section id="viewSubmit" hidden>
-      <h1 id="greet">Nice to see you</h1>
-      <div class="current" id="curLine"></div>
-      <form id="subForm" novalidate>
-        <label for="nickname">Your new nickname</label>
-        <input type="text" id="nickname" name="nickname" maxlength="40" autocomplete="off" placeholder="e.g. The Cueball Kid" required>
-        <div class="counter" id="counter"><span id="count">0</span> / 20</div>
-        <div class="err" id="nickErr"></div>
-        <div class="hp" aria-hidden="true">
-          <label for="hp2">Leave this field empty</label>
-          <input type="text" id="hp2" name="hp2" tabindex="-1" autocomplete="off">
-        </div>
-        <button type="submit" id="subBtn">Make it official</button>
-        <div class="note">A human reviews every nickname before it goes live.</div>
-      </form>
-    </section>
+      <!-- VIEW B: verify + submit (shown after a good token) -->
+      <section id="viewSubmit" hidden>
+        <h2 class="view-title" id="greet">Nice to see you</h2>
+        <div class="current" id="curLine"></div>
+        <form id="subForm" novalidate>
+          <label for="nickname">Your new nickname</label>
+          <input type="text" id="nickname" name="nickname" maxlength="40" autocomplete="off" placeholder="e.g. The Cueball Kid" required>
+          <div class="counter" id="counter"><span id="count">0</span> / 20</div>
+          <div class="err" id="nickErr"></div>
+          <div class="hp" aria-hidden="true">
+            <label for="hp2">Leave this field empty</label>
+            <input type="text" id="hp2" name="hp2" tabindex="-1" autocomplete="off">
+          </div>
+          <button type="submit" id="subBtn" class="spm-btn spm-btn-primary btn-full">Make it official</button>
+          <div class="note">A human reviews every nickname before it goes live.</div>
+        </form>
+      </section>
 
-    <div class="loading" id="loading" hidden>Checking your link…</div>
-    <div class="result" id="result" role="status" aria-live="polite"></div>
+      <div class="loading" id="loading" hidden>Checking your link…</div>
+      <div class="result" id="result" role="status" aria-live="polite"></div>
+    </main>
 
-    <div class="foot">NickPick v0.1 · South Portland Metro APA</div>
-  </main>
+    <div class="spm-footer">NickPick v0.2 · South Portland Metro APA</div>
+  </div>
 
 <script>
   const GAS_URL = 'https://script.google.com/macros/s/AKfycbzGTzkBRTrIIP_tD6sbtOOUmNZkXDdtxPoO4c8fdWt5h3tZFueNSISPv8Q3LWStx73Whw/exec';
