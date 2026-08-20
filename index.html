@@ -79,7 +79,7 @@
             <input type="text" id="hp1" name="hp1" tabindex="-1" autocomplete="off">
           </div>
           <button type="submit" id="reqBtn" class="spm-btn spm-btn-primary btn-full">Send me the link</button>
-          <div class="note">We'll only send a link if you're on our roster. It goes to the email on file.</div>
+          <div class="note">The link goes to the email we have on file for you.</div>
         </form>
       </section>
 
@@ -109,7 +109,7 @@
       <div class="result" id="result" role="status" aria-live="polite"></div>
     </main>
 
-    <div class="spm-footer">NickPick v0.3 · South Portland Metro APA</div>
+    <div class="spm-footer">NickPick v0.4 · South Portland Metro APA</div>
   </div>
 
 <script>
@@ -149,11 +149,12 @@
         const data = await post({ action:'nickname_link_request', identifier: ident, hp: $('hp1').value, source:'nickpick-web' });
         if (data && data.ok) {
           $('viewRequest').hidden = true;
-          showResult('ok', 'Check your inbox',
-            'If that email or APA number is on our roster, a nickname link is on its way to the email on file. It keeps you signed in once you tap it. (Peek in spam if it is playing hard to get.)');
+          const hi = data.first_name ? ('Thanks, ' + escapeHtml(data.first_name) + '!') : 'Check your inbox';
+          showResult('ok', hi,
+            'A sign-in link is on its way to the email we have on file for you. It keeps you signed in once you tap it. (Peek in spam if it is playing hard to get.)');
         } else {
           btn.disabled = false; btn.textContent = 'Send me the link';
-          showResult('bad', 'Hmm, that did not go through', (data && data.error) || 'Please try again in a moment.');
+          showResult('bad', 'Hmm', (data && data.error) || 'Please try again in a moment.');
         }
       } catch (err) {
         btn.disabled = false; btn.textContent = 'Send me the link';
