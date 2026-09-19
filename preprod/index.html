@@ -204,7 +204,7 @@
           btn.disabled = false; btn.textContent = 'Make it official';
           const msg = (res && res.error) || 'Please try again.';
           if (spmAuth.isAuthErr(msg)) { spmAuth.clear(); }
-          showResult('bad', 'That did not go through', msg + (/(session|sign in|signed out|valid|expired|fresh)/i.test(msg) ? freshLink : ''));
+          showResult('bad', 'That did not go through', msg + ((spmAuth.isAuthErr(msg) || /expired|fresh/i.test(msg)) ? freshLink : ''));
         }
       } catch (err) {
         btn.disabled = false; btn.textContent = 'Make it official';
