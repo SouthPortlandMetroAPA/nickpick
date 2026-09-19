@@ -112,15 +112,16 @@
     <div class="spm-footer">NickPick v0.4 · South Portland Metro APA</div>
   </div>
 
+<script src="https://southportlandmetroapa.github.io/shared/spm-auth.js"></script>
 <script>
   const GAS_URL = 'https://script.google.com/macros/s/AKfycbzGTzkBRTrIIP_tD6sbtOOUmNZkXDdtxPoO4c8fdWt5h3tZFueNSISPv8Q3LWStx73Whw/exec';
-  const SKEY = 'nickpick_session';
+  /* session token lives in the SHARED key via spm-auth.js (SSO across every SPM app, 2026-09-18) */
   const $ = id => document.getElementById(id);
   const isEmail = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
   const looksLikeApa = v => /^\d[\d\s-]{2,}$/.test(v.trim());   // email OR >=3 digits
   const result = $('result');
   const urlToken = new URLSearchParams(location.search).get('token');
-  let sessionToken = urlToken || localStorage.getItem(SKEY) || null;
+  let sessionToken = urlToken || spmAuth.get() || null;
 
   function showResult(kind, title, msg){
     result.className = 'result show ' + kind;
@@ -175,8 +176,7 @@
 
     $('logoutBtn').addEventListener('click', async () => {
       const t = sessionToken;
-      localStorage.removeItem(SKEY);
-      try { await post({ action:'nickname_logout', token: t }); } catch (e) {}
+      try { await spmAuth.logout(t); } catch (e) {}
       location.href = location.pathname;
     });
 
@@ -203,8 +203,8 @@
         } else {
           btn.disabled = false; btn.textContent = 'Make it official';
           const msg = (res && res.error) || 'Please try again.';
-          if (/(session|sign in|signed out|valid)/i.test(msg)) { localStorage.removeItem(SKEY); }
-          showResult('bad', 'That did not go through', msg + (/(session|sign in|signed out|valid|expired|fresh)/i.test(msg) ? freshLink : ''));
+          if (spmAuth.isAuthErr(msg)) { spmAuth.clear(); }
+          showResult('bad', 'That did not go through', msg + ((spmAuth.isAuthErr(msg) || /expired|fresh/i.test(msg)) ? freshLink : ''));
         }
       } catch (err) {
         btn.disabled = false; btn.textContent = 'Make it official';
@@ -222,11 +222,12 @@
     catch (err) { $('loading').hidden = true; initRequest(); showResult('bad', 'Connection problem', 'We could not reach the server. Try again in a moment.'); return; }
     $('loading').hidden = true;
     if (data && data.ok) {
-      localStorage.setItem(SKEY, sessionToken);
+      spmAuth.set(sessionToken);
+      spmAuth.onChange(function(t){ if((t||'')!==(sessionToken||'')) location.reload(); });   /* SSO: another app signed in/out */
       if (urlToken) history.replaceState(null, '', location.pathname);   // clean the token out of the URL
       showSubmit(data);
     } else {
-      localStorage.removeItem(SKEY);
+      if (!urlToken || spmAuth.isAuthErr(data && data.error)) spmAuth.clear();
       // Only surface an error if they arrived via a (bad) link; a stale stored
       // session just silently drops back to the request form.
       initRequest(urlToken ? ((data && data.error) || 'This link is not valid.') : null);
