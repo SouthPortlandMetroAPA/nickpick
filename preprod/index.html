@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<!--
+  NickPick — South Portland Metro APA · player nickname change requests (v0.3)
+  ─────────────────────────────────────────────────────────────────────────
+  ONE page, two views:
+    Request  → enter EMAIL or APA# → POST nickname_link_request (link emailed to
+               the address on file). Enumeration-safe.
+    Submit   → shown when signed in: after clicking the magic-link (?token=) OR
+               from a stored session (localStorage). POST nickname_verify to
+               validate/activate; POST nickname_submit to request a nickname.
+               A Log out button revokes the session (POST nickname_logout).
+  Sessions persist (stay signed in on this device) until logout.
+  All POSTs go to the GAS apa-mailer as text/plain — NEVER application/json
+  (JSON triggers a CORS preflight GAS can't answer). 100% client-side, NO secrets.
+  This app NEVER writes the nickname anywhere — it captures a REQUEST; the change
+  is entered in Nexus by an operator. Anti-abuse: honeypot + server rate limit.
+  Brand: shared spm-base.css (red→blue gradient, brand colors, pill buttons).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Change Your Nickname — South Portland Metro APA</title>
+<link rel="stylesheet" href="https://southportlandmetroapa.github.io/shared/spm-base.css">
+<style>
+  /* App-specific bits over the shared SPM brand (tokens from spm-base.css). */
+  .spm-page{ max-width:560px; }
+  .lead{ color:var(--muted); margin:2px 0 16px; font-size:1rem; }
+  .view-title{ font-size:1.2rem; font-weight:800; margin:0 0 6px; color:var(--text); }
+  label{ display:block; font-weight:600; font-size:.9rem; margin:14px 0 5px; }
+  input[type=email], input[type=text]{
+    width:100%; font:inherit; font-size:1rem; color:var(--text); background:#fff;
+    border:1px solid var(--border); border-radius:12px; padding:12px 13px;
+    transition:border-color .15s, box-shadow .15s;
+  }
+  input:focus{ outline:none; border-color:var(--spm-accent); box-shadow:0 0 0 3px rgba(0,49,161,.15); }
+  .err{ color:var(--spm-primary); font-size:.82rem; margin-top:5px; min-height:16px; }
+  .counter{ font-size:.78rem; color:var(--muted); text-align:right; margin-top:4px; }
+  .counter.over{ color:var(--spm-primary); font-weight:700; }
+  .current{ background:#e8f0fe; color:#1a3b6b; border-radius:12px; padding:11px 13px; font-size:.95rem; margin:2px 0 4px; }
+  .current b{ color:#12305e; }
+  .signedin{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+  .signedin .who{ font-size:.82rem; color:var(--muted); }
+  .btn-logout{ background:#fff; color:var(--spm-accent); border:1px solid var(--border); border-radius:999px; padding:6px 14px; font-size:.82rem; font-weight:700; cursor:pointer; min-height:0; }
+  .btn-logout:hover{ background:#f0f0f0; }
+  .hp{ position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden; }
+  .spm-btn.btn-full{ width:100%; margin-top:20px; }
+  .spm-btn:disabled{ opacity:.6; cursor:default; filter:none; transform:none; }
+  .note{ margin-top:14px; font-size:.8rem; color:var(--muted); text-align:center; }
+  .loading{ margin-top:8px; font-size:.95rem; color:var(--muted); text-align:center; }
+  .result{ margin-top:16px; border-radius:12px; padding:14px 15px; font-size:.95rem; display:none; }
+  .result.show{ display:block; }
+  .result.ok{ background:#e8f0fe; color:#1a3b6b; }
+  .result.bad{ background:#fce8ea; color:#a02030; }
+  .result h2{ margin:0 0 4px; font-size:1.05rem; }
+  .result p{ margin:0; }
+  a.again{ color:var(--spm-accent); font-weight:700; cursor:pointer; text-decoration:none; }
+  a.again:hover{ text-decoration:underline; }
+  [hidden]{ display:none !important; }
+</style>
+</head>
+<body>
+  <div class="spm-page">
+    <header class="spm-header">
+      <h1>NickPick</h1>
+      <p class="spm-subtitle">Change your pool nickname</p>
+    </header>
+
+    <main class="spm-card">
+      <!-- VIEW A: request a magic-link (email or APA#) -->
+      <section id="viewRequest" hidden>
+        <p class="lead">Want a new nickname? Enter your league email or APA number and we'll send you a link to change it. No password needed.</p>
+        <form id="reqForm" novalidate>
+          <label for="ident">Your email or APA number</label>
+          <input type="text" id="ident" name="ident" autocomplete="off" inputmode="email" placeholder="you@example.com  or  01234567" required>
+          <div class="err" id="identErr"></div>
+          <div class="hp" aria-hidden="true">
+            <label for="hp1">Leave this field empty</label>
+            <input type="text" id="hp1" name="hp1" tabindex="-1" autocomplete="off">
+          </div>
+          <button type="submit" id="reqBtn" class="spm-btn spm-btn-primary btn-full">Send me the link</button>
+          <div class="note">The link goes to the email we have on file for you.</div>
+        </form>
+      </section>
+
+      <!-- VIEW B: signed in — submit a nickname -->
+      <section id="viewSubmit" hidden>
+        <div class="signedin">
+          <span class="who">Signed in</span>
+          <button type="button" class="btn-logout" id="logoutBtn">Log out</button>
+        </div>
+        <h2 class="view-title" id="greet">Nice to see you</h2>
+        <div class="current" id="curLine"></div>
+        <form id="subForm" novalidate>
+          <label for="nickname">Your new nickname</label>
+          <input type="text" id="nickname" name="nickname" maxlength="40" autocomplete="off" placeholder="e.g. The Cueball Kid" required>
+          <div class="counter" id="counter"><span id="count">0</span> / 20</div>
+          <div class="err" id="nickErr"></div>
+          <div class="hp" aria-hidden="true">
+            <label for="hp2">Leave this field empty</label>
+            <input type="text" id="hp2" name="hp2" tabindex="-1" autocomplete="off">
+          </div>
+          <button type="submit" id="subBtn" class="spm-btn spm-btn-primary btn-full">Make it official</button>
+          <div class="note">A human reviews every nickname before it goes live. You stay signed in on this device.</div>
+        </form>
+      </section>
+
+      <div class="loading" id="loading" hidden>Checking you in…</div>
+      <div class="result" id="result" role="status" aria-live="polite"></div>
+    </main>
+
+    <div class="spm-footer">NickPick v0.4 · South Portland Metro APA</div>
+  </div>
+
+<script src="https://southportlandmetroapa.github.io/shared/spm-auth.js"></script>
+<script>
+  const GAS_URL = 'https://script.google.com/macros/s/AKfycbzGTzkBRTrIIP_tD6sbtOOUmNZkXDdtxPoO4c8fdWt5h3tZFueNSISPv8Q3LWStx73Whw/exec';
+  /* session token lives in the SHARED key via spm-auth.js (SSO across every SPM app, 2026-09-18) */
+  const $ = id => document.getElementById(id);
+  const isEmail = v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  const looksLikeApa = v => /^\d[\d\s-]{2,}$/.test(v.trim());   // email OR >=3 digits
+  const result = $('result');
+  const urlToken = new URLSearchParams(location.search).get('token');
+  let sessionToken = urlToken || spmAuth.get() || null;
+
+  function showResult(kind, title, msg){
+    result.className = 'result show ' + kind;
+    result.innerHTML = '<h2>' + title + '</h2><p>' + msg + '</p>';
+  }
+  function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  const freshLink = '<br><br><a class="again" onclick="location.href=location.pathname">Request a fresh link</a>';
+
+  // text/plain (default for a string body) — no CORS preflight; GAS parses the raw JSON body.
+  async function post(payload){
+    const r = await fetch(GAS_URL, { method:'POST', body: JSON.stringify(payload) });
+    return r.json();
+  }
+
+  /* ── Request a link (email or APA#) ─────────────────────────────────── */
+  function initRequest(errMsg){
+    $('viewRequest').hidden = false;
+    if (errMsg) showResult('bad', 'That link will not work', errMsg + freshLink);
+    $('reqForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      $('identErr').textContent = '';
+      const ident = $('ident').value.trim();
+      if (!isEmail(ident) && !looksLikeApa(ident)) { $('identErr').textContent = 'Enter your email or APA number.'; return; }
+      const btn = $('reqBtn'); btn.disabled = true; btn.textContent = 'Sending…'; result.className = 'result';
+      try {
+        const data = await post({ action:'nickname_link_request', identifier: ident, hp: $('hp1').value, source:'nickpick-web' });
+        if (data && data.ok) {
+          $('viewRequest').hidden = true;
+          const hi = data.first_name ? ('Thanks, ' + escapeHtml(data.first_name) + '!') : 'Check your inbox';
+          showResult('ok', hi,
+            'A sign-in link is on its way to the email we have on file for you. It keeps you signed in once you tap it. (Peek in spam if it is playing hard to get.)');
+        } else {
+          btn.disabled = false; btn.textContent = 'Send me the link';
+          showResult('bad', 'Hmm', (data && data.error) || 'Please try again in a moment.');
+        }
+      } catch (err) {
+        btn.disabled = false; btn.textContent = 'Send me the link';
+        showResult('bad', 'Connection problem', 'We could not reach the server. Check your connection and try again.');
+      }
+    });
+  }
+
+  /* ── Signed-in view: submit a nickname + log out ────────────────────── */
+  function showSubmit(data){
+    const name = (data.first_name || '').trim();
+    const cur  = (data.current_nickname || '').trim();
+    $('greet').textContent = name ? ('Hey ' + name + '!') : 'Hey there!';
+    $('curLine').innerHTML = cur
+      ? 'You are currently known as <b>' + escapeHtml(cur) + '</b>. What would you like instead?'
+      : 'You do not have a nickname yet. Let us fix that.';
+    $('viewSubmit').hidden = false;
+
+    $('logoutBtn').addEventListener('click', async () => {
+      const t = sessionToken;
+      try { await spmAuth.logout(t); } catch (e) {}
+      location.href = location.pathname;
+    });
+
+    const nick = $('nickname'), count = $('count'), counter = $('counter');
+    nick.addEventListener('input', () => {
+      const n = nick.value.trim().length;
+      count.textContent = n;
+      counter.classList.toggle('over', n > 20);
+    });
+
+    $('subForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      $('nickErr').textContent = '';
+      const nickname = nick.value.trim();
+      if (!nickname) { $('nickErr').textContent = 'Give us a nickname first.'; return; }
+      if (nickname.length > 40) { $('nickErr').textContent = 'A touch long — keep it under 40 characters.'; return; }
+      const btn = $('subBtn'); btn.disabled = true; btn.textContent = 'Sending…'; result.className = 'result';
+      try {
+        const res = await post({ action:'nickname_submit', token: sessionToken, nickname, hp: $('hp2').value, source:'nickpick-web' });
+        if (res && res.ok) {
+          $('viewSubmit').hidden = true;
+          showResult('ok', 'Request received!',
+            'You asked to be known as <b>' + escapeHtml(nickname) + '</b>. A human will make it official and we will email you the moment it is done. Hold the victory lap until then.');
+        } else {
+          btn.disabled = false; btn.textContent = 'Make it official';
+          const msg = (res && res.error) || 'Please try again.';
+          if (spmAuth.isAuthErr(msg)) { spmAuth.clear(); }
+          showResult('bad', 'That did not go through', msg + (/(session|sign in|signed out|valid|expired|fresh)/i.test(msg) ? freshLink : ''));
+        }
+      } catch (err) {
+        btn.disabled = false; btn.textContent = 'Make it official';
+        showResult('bad', 'Connection problem', 'We could not reach the server. Check your connection and try again.');
+      }
+    });
+  }
+
+  /* ── Boot: try the session/link, else show the request form ─────────── */
+  async function boot(){
+    if (!sessionToken) { initRequest(); return; }
+    $('loading').hidden = false;
+    let data;
+    try { data = await post({ action:'nickname_verify', token: sessionToken }); }
+    catch (err) { $('loading').hidden = true; initRequest(); showResult('bad', 'Connection problem', 'We could not reach the server. Try again in a moment.'); return; }
+    $('loading').hidden = true;
+    if (data && data.ok) {
+      spmAuth.set(sessionToken);
+      spmAuth.onChange(function(t){ if((t||'')!==(sessionToken||'')) location.reload(); });   /* SSO: another app signed in/out */
+      if (urlToken) history.replaceState(null, '', location.pathname);   // clean the token out of the URL
+      showSubmit(data);
+    } else {
+      if (!urlToken || spmAuth.isAuthErr(data && data.error)) spmAuth.clear();
+      // Only surface an error if they arrived via a (bad) link; a stale stored
+      // session just silently drops back to the request form.
+      initRequest(urlToken ? ((data && data.error) || 'This link is not valid.') : null);
+    }
+  }
+
+  boot();
+</script>
+</body>
+</html>
